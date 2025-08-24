@@ -27,14 +27,15 @@ export function AuctionItem({ itemId }: AuctionItemProps) {
   const { data: itemInfo, refetch: refetchItemInfo } = useItemInformation(itemId)
   
   // 合约操作
-  const { 
-    putOnShelves, 
-    markUp, 
-    closeAuction, 
+  const {
+    putOnShelves,
+    markUp,
+    closeAuction,
+    stopAuction,
     getAuctionMoney,
     isPending,
     isConfirming,
-    isConfirmed 
+    isConfirmed
   } = useAuctionActions()
 
   const item = ITEMS.find(i => i.id === itemId)
@@ -87,6 +88,7 @@ export function AuctionItem({ itemId }: AuctionItemProps) {
 
   const canBid = isAuctionActive && !isAuctioneer && timeLeft > 0
   const canClose = isAuctionActive && isAuctioneer && timeLeft === 0
+  const canStop = isAuctionActive && isAuctioneer && timeLeft > 0
 
   return (
     <div className="bg-gray-800 rounded-lg p-6 space-y-4">
@@ -148,6 +150,20 @@ export function AuctionItem({ itemId }: AuctionItemProps) {
               </button>
             )}
             
+            {canStop && (
+              <button
+                onClick={() => {
+                  if (confirm('确定要提前停止拍卖吗？这将退还当前最高出价给出价者。')) {
+                    stopAuction(itemId)
+                  }
+                }}
+                disabled={isPending || isConfirming}
+                className="flex-1 bg-orange-600 hover:bg-orange-700 disabled:bg-gray-600 text-white px-4 py-2 rounded-lg font-medium transition-colors"
+              >
+                {isPending || isConfirming ? '停止中...' : '停止拍卖'}
+              </button>
+            )}
+
             {canClose && (
               <button
                 onClick={() => closeAuction(itemId)}

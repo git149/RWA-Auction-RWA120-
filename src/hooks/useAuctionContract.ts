@@ -64,6 +64,49 @@ export function useSender() {
   })
 }
 
+// 新增：动态商品管理相关的 hooks
+export function useAllItemIds() {
+  return useReadContract({
+    address: CONTRACT_ADDRESS,
+    abi: RWA120_ABI,
+    functionName: 'getAllItemIds',
+  })
+}
+
+export function useTotalItems() {
+  return useReadContract({
+    address: CONTRACT_ADDRESS,
+    abi: RWA120_ABI,
+    functionName: 'getTotalItems',
+  })
+}
+
+export function useItemExists(itemId: number) {
+  return useReadContract({
+    address: CONTRACT_ADDRESS,
+    abi: RWA120_ABI,
+    functionName: 'itemExistsCheck',
+    args: [itemId],
+  })
+}
+
+export function useItemDetails(itemId: number) {
+  return useReadContract({
+    address: CONTRACT_ADDRESS,
+    abi: RWA120_ABI,
+    functionName: 'getItemDetails',
+    args: [itemId],
+  })
+}
+
+export function useNextItemId() {
+  return useReadContract({
+    address: CONTRACT_ADDRESS,
+    abi: RWA120_ABI,
+    functionName: 'nextItemId',
+  })
+}
+
 // 写入合约的 hooks
 export function useAuctionActions() {
   const { writeContract, data: hash, isPending, error } = useWriteContract()
@@ -99,6 +142,15 @@ export function useAuctionActions() {
     })
   }
 
+  const stopAuction = (itemId: number) => {
+    writeContract({
+      address: CONTRACT_ADDRESS,
+      abi: RWA120_ABI,
+      functionName: 'stopAuction',
+      args: [itemId],
+    })
+  }
+
   const getAuctionMoney = (itemId: number) => {
     writeContract({
       address: CONTRACT_ADDRESS,
@@ -116,12 +168,33 @@ export function useAuctionActions() {
     })
   }
 
+  const addNewItem = (itemName: string) => {
+    writeContract({
+      address: CONTRACT_ADDRESS,
+      abi: RWA120_ABI,
+      functionName: 'addNewItem',
+      args: [itemName],
+    })
+  }
+
+  const removeItem = (itemId: number) => {
+    writeContract({
+      address: CONTRACT_ADDRESS,
+      abi: RWA120_ABI,
+      functionName: 'removeItem',
+      args: [itemId],
+    })
+  }
+
   return {
     putOnShelves,
     markUp,
     closeAuction,
+    stopAuction,
     getAuctionMoney,
     destroy,
+    addNewItem,
+    removeItem,
     isPending,
     isConfirming,
     isConfirmed,

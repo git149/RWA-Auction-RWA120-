@@ -3,10 +3,18 @@ import { WalletConnection } from '@/components/WalletConnection'
 import { AuctionItem } from '@/components/AuctionItem'
 import { QueryPanel } from '@/components/QueryPanel'
 import { ContractDebugger } from '@/components/ContractDebugger'
+import { ItemManager } from '@/components/ItemManager'
+import { useAllItemIds } from '@/hooks/useAuctionContract'
 import { ITEMS, CONTRACT_ADDRESS } from '@/config/contract'
 
 function App() {
   const { isConnected } = useAccount()
+  const { data: allItemIds } = useAllItemIds()
+
+  // 使用动态商品列表，如果没有则回退到默认商品
+  const displayItems = allItemIds && allItemIds.length > 0
+    ? allItemIds.map(id => ({ id: Number(id), name: `商品 ${id}` }))
+    : ITEMS
 
   return (
     <div className="min-h-screen bg-gray-900 py-8">
@@ -36,11 +44,14 @@ function App() {
             {/* 信息查询面板 */}
             <QueryPanel />
 
+            {/* 商品管理面板 */}
+            <ItemManager />
+
             <h2 className="text-2xl font-bold text-white text-center mb-6">
               拍卖商品
             </h2>
             <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-              {ITEMS.map((item) => (
+              {displayItems.map((item) => (
                 <AuctionItem key={item.id} itemId={item.id} />
               ))}
             </div>

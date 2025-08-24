@@ -1,5 +1,5 @@
 import { Address } from 'viem'
-import rwa120ABI from '../../contract/interfaces/rwa120ABI.json'
+import rwa120ABI from '../../contract/test/interfaces/rwa120ABI.json'
 
 export const CONTRACT_ADDRESS = import.meta.env.VITE_CONTRACT_ADDRESS as Address
 export const CHAIN_ID = parseInt(import.meta.env.VITE_CHAIN_ID || '11155111')
