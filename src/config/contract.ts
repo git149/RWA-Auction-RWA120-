@@ -1,10 +1,10 @@
 import { Address } from 'viem'
-import rwa120ABI from '../../contract/test/interfaces/rwa120ABI.json'
+import rwa120ABI from '../../contract/rwa120ABI.json'
 
 export const CONTRACT_ADDRESS = import.meta.env.VITE_CONTRACT_ADDRESS as Address
 export const CHAIN_ID = parseInt(import.meta.env.VITE_CHAIN_ID || '11155111')
 
-export const RWA120_ABI = rwa120ABI as const
+export const RWA120_ABI = rwa120ABI 
 
 // 商品信息（从合约构造函数中获取）
 export const ITEMS = [

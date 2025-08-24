@@ -13,8 +13,8 @@ contract auction{
     //定义商品处于的状态
     mapping(uint256 => string) state;
  
-    //状态池
-    mapping(uint256 => uint256) Astate;
+    //状态池 - 优化：使用uint8节省存储空间（状态值只有0-3）
+    mapping(uint256 => uint8) Astate;
  
     //定义商品的归属人
     mapping(uint256 => address) belong;
@@ -38,27 +38,70 @@ contract auction{
     uint256 AuctionTime;
 
     // ===== 新增：动态商品管理相关变量 =====
-    
+
     //商品ID计数器，从3开始（0,1,2已被默认商品占用）
     uint256 public nextItemId = 3;
-    
+
     //记录商品是否存在
     mapping(uint256 => bool) public itemExists;
-    
+
     //记录所有存在的商品ID列表
     uint256[] public allItemIds;
-    
+
     //记录每个商品的创建时间
     mapping(uint256 => uint256) public itemCreatedAt;
-    
+
     //记录每个商品的创建者（可能与Auctioneer不同，用于扩展）
     mapping(uint256 => address) public itemCreator;
+
+    // ===== 新增：合约状态管理变量 =====
+
+    //合约是否被禁用
+    bool public contractDisabled = false;
+
+    // ===== 新增：多人拍卖相关变量 =====
+
+    // 拍卖模式枚举
+    enum AuctionMode { SINGLE, MULTI }
+
+    // 多人拍卖的出价记录结构
+    struct MultiBidder {
+        address bidder;
+        uint256 amount;
+        uint256 timestamp;
+    }
+
+    // 记录每个商品的拍卖模式
+    mapping(uint256 => AuctionMode) public auctionMode;
+
+    // 记录多人拍卖中用户的份额 (商品ID => 用户地址 => 份额金额)
+    mapping(uint256 => mapping(address => uint256)) public userShares;
+
+    // 记录每个商品的总份额金额
+    mapping(uint256 => uint256) public totalShares;
+
+    // 记录多人拍卖的所有出价者
+    mapping(uint256 => MultiBidder[]) public multiBidders;
+
+    // 记录每个商品的股东地址列表
+    mapping(uint256 => address[]) public shareholders;
+
+    // 记录用户是否已经是某商品的股东（避免重复添加到股东列表）
+    mapping(uint256 => mapping(address => bool)) public isShareholder;
 
     // ===== 事件定义 =====
 
     event ItemAdded(uint256 indexed itemId, string itemName, address indexed creator, uint256 createdAt);
     event ItemRemoved(uint256 indexed itemId, string itemName);
     event AuctionStopped(uint256 indexed itemId, string itemName, address indexed highestBidder, uint256 refundAmount, uint256 stoppedAt);
+
+    // 新增：多人拍卖相关事件
+    event AuctionModeSet(uint256 indexed itemId, AuctionMode mode);
+    event MultiBidPlaced(uint256 indexed itemId, address indexed bidder, uint256 amount, uint256 timestamp);
+    event SharesCalculated(uint256 indexed itemId, uint256 totalAmount, uint256 shareholderCount);
+    event ShareQuery(uint256 indexed itemId, address indexed user, uint256 shares, uint256 percentage);
+    event ShareholderWithdrawal(uint256 indexed itemId, address indexed shareholder, uint256 amount);
+    event ContractDisabled(uint256 timestamp);
  
     //定义出价记录的结构体
     struct Bidder {
@@ -123,6 +166,18 @@ contract auction{
         _;
     }
 
+    // 优化：添加统一的存在性检查修饰器，避免重复检查
+    modifier itemMustExist(uint256 itemId) {
+        require(itemExists[itemId], "Item does not exist");
+        _;
+    }
+
+    // 新增：合约状态检查修饰器
+    modifier whenNotDisabled() {
+        require(!contractDisabled, "Contract is disabled");
+        _;
+    }
+
     // ===== 新增：拍卖时间管理函数 =====
 
     /*
@@ -151,10 +206,10 @@ contract auction{
     @param itemName 商品名称
     @return uint256 新商品的ID
     */
-    function addNewItem(string memory itemName) external Authentication returns (uint256) {
+    function addNewItem(string memory itemName) external Authentication whenNotDisabled returns (uint256) {
         require(bytes(itemName).length > 0, "Item name cannot be empty");
         require(bytes(itemName).length <= 100, "Item name too long");
-        
+
         // 确保当前没有拍卖在进行
         require(timeStamp == 0 && endtime == 0, "Cannot add item while auction is active");
         
@@ -181,8 +236,7 @@ contract auction{
     @dev 只有拍卖发起人可以调用
     @param itemId 要移除的商品ID
     */
-    function removeItem(uint256 itemId) external Authentication {
-        require(itemExists[itemId], "Item does not exist");
+    function removeItem(uint256 itemId) external Authentication itemMustExist(itemId) {
         require(itemId >= 3, "Cannot remove default items");
         require(Astate[itemId] != 1, "Cannot remove item under auction");
         require(bond[itemId] == 0, "Cannot remove item with pending funds");
@@ -259,41 +313,53 @@ contract auction{
     // ===== 修改现有函数以支持动态商品 =====
     
     /*
-    @notice 将商品上架（修改版本，支持动态商品）
+    @notice 将商品上架（修改版本，支持动态商品和多人拍卖）
     @dev 商品状态必须为 "To be auctioned"
     @param numb 商品编号
+    @param mode 拍卖模式 (0: 单一所有权, 1: 多人共同持有)
     */
-    function PutOnShelves(uint8 numb) public Authentication{
-        //检查商品是否存在
-        require(itemExists[numb], "Item does not exist");
-        
+    function PutOnShelves(uint256 numb, AuctionMode mode) public Authentication itemMustExist(numb) whenNotDisabled {
+
         //使用require对商品状态进行判断，当商品状态不为0时，说明我们的商品已经上架过并进行了其他操作
         require (Astate[numb] == 0, "The goods are under auction or have been sold");
- 
+
         //使用require判断目前是否还有其他的商品正在进行拍卖
         require (timeStamp == 0 && endtime == 0, "Currently, there are goods under auction");
- 
+
+        //设置拍卖模式
+        auctionMode[numb] = mode;
+
         //修改商品状态
         Astate[numb] = 1;
- 
+
         //定义商品开始拍卖时间
         timeStamp= block.timestamp;
 
         //定义结束时间，使用AuctionTime变量
         endtime = block.timestamp + AuctionTime;
- 
+
         //商品归属者转移
         belong[numb] = Auctioneer;
+
+        //发出拍卖模式设置事件
+        emit AuctionModeSet(numb, mode);
     }
 
     /*
-    @notice 实现买方对拍卖中的商品进行加价（修改版本，支持动态商品）
+    @notice 将商品上架（兼容旧版本，默认单一所有权模式）
+    @dev 为了保持向后兼容性
+    @param numb 商品编号
+    */
+    function PutOnShelves(uint256 numb) public Authentication{
+        PutOnShelves(numb, AuctionMode.SINGLE);
+    }
+
+    /*
+    @notice 实现买方对拍卖中的商品进行加价（修改版本，支持动态商品和多人拍卖）
     @dev 在 msg.value 中设置的加价的金额应该大于默认值 100
     @param numb 商品编号
     */
-    function MarkUp (uint8 numb) public payable {
-        //检查商品是否存在
-        require(itemExists[numb], "Item does not exist");
+    function MarkUp (uint256 numb) public payable itemMustExist(numb) whenNotDisabled {
 
         //使用require对加价者身份进行判断，拍卖方无法对已上架的商品进行加价
         require(msg.sender != Auctioneer ,"The product is already in the auction, you cannot increase the price");
@@ -310,47 +376,77 @@ contract auction{
         //使用require对当前商品的状态进行判断，加价的商品需要是正在拍卖的商品
         require(Astate[numb] == 1, "The current commodity auction has ended");
 
-        //对加价判断是否为第一次出价
-        if(bond[numb] == 0){
+        //检查出价金额是否大于起拍价
+        require(msg.value > StartPrice,"Your bid amount must be greater than the starting price");
 
-            //使用require判断第一次加价的金额不能低于起拍价
-            require(msg.value > StartPrice,"Your bid amount must be greater than the starting price");
+        // 根据拍卖模式执行不同的逻辑
+        if (auctionMode[numb] == AuctionMode.SINGLE) {
+            // 单一所有权模式：保持原有逻辑
+            //使用require对加价金额判断不能低于上一次出价
+            require(msg.value > bond[numb], "Your bid amount must be greater than the current price");
+
+            //调用AmoutRollback函数，将上一个出价者的交易金额退回，并收取当前出价者的交易金额
+            AmountRollback(numb);
+
+            //调用AddTransaction函数，保存商品的出价记录
+            AddTransaction(numb);
+
+            //满足以上条件则说明买方的价格满足加价的要求，将当前的商品归属转移至此买方的地址
+            belong[numb] = msg.sender;
+
+        } else {
+            // 多人共同持有模式：收集所有出价
+            //在多人模式下，不需要超过之前的出价，每个出价都有效
+
+            //记录多人拍卖出价
+            multiBidders[numb].push(MultiBidder({
+                bidder: msg.sender,
+                amount: msg.value,
+                timestamp: block.timestamp
+            }));
+
+            //如果是第一次出价，添加到股东列表
+            if (!isShareholder[numb][msg.sender]) {
+                shareholders[numb].push(msg.sender);
+                isShareholder[numb][msg.sender] = true;
+            }
+
+            //累加用户份额
+            userShares[numb][msg.sender] += msg.value;
+            totalShares[numb] += msg.value;
+
+            //发出多人出价事件
+            emit MultiBidPlaced(numb, msg.sender, msg.value, block.timestamp);
+
+            //在多人模式下，商品归属设置为合约地址（表示共同持有）
+            belong[numb] = address(this);
         }
-
-        //使用require对加价金额判断不能低于上一次出价
-        require(msg.value > bond[numb], "Your bid amount must be greater than the current price");
-
-        //调用AmoutRollback函数，将上一个出价者的交易金额退回，并收取当前出价者的交易金额
-        AmountRollback(numb);
-
-        //调用AddTransaction函数，保存商品的出价记录
-        AddTransaction(numb);
-
-        //满足以上条件则说明买方的价格满足加价的要求，将当前的商品归属转移至此买方的地址
-        belong[numb] = msg.sender;
     }
 
     /*
-    @notice 实现将买方支付的保证金退回
+    @notice 实现将买方支付的保证金退回 - 修复重入攻击漏洞
     @param numb 商品编号
     */
-    function AmountRollback(uint8 numb) internal {
+    function AmountRollback(uint256 numb) internal {
+        // ✅ 修复重入攻击：先保存状态，再更新，最后执行外部调用
+        address payable previousBidder = maxAdd[numb];
+        uint256 refundAmount = bond[numb];
 
-        //将上一个支付交易金额退回
-        maxAdd[numb].transfer(bond[numb]);
-
-        //收取当前出价者的交易金额
+        // ✅ 先更新状态
         bond[numb] = msg.value;
-
-        //记录出价者的地址
         maxAdd[numb] = payable(msg.sender);
+
+        // ✅ 最后执行外部调用
+        if (refundAmount > 0 && previousBidder != address(0)) {
+            previousBidder.transfer(refundAmount);
+        }
     }
 
     /*
     @notice 实现记录商品的交易记录
     @param numb 商品编号
     */
-    function AddTransaction(uint8 numb) internal {
+    function AddTransaction(uint256 numb) internal {
 
         //将出价者的地址，金额，出价时间戳，添加进bidder
         bidder = Bidder(msg.sender,msg.value,block.timestamp);
@@ -359,12 +455,10 @@ contract auction{
     }
 
     /*
-    @notice 实现修改商品的状态为  "成功出售状态" 或 "流拍状态"（修改版本，支持动态商品）
+    @notice 实现修改商品的状态为  "成功出售状态" 或 "流拍状态"（修改版本，支持动态商品和多人拍卖）
     @param numb 商品编号
     */
-    function closeAuction(uint8 numb) public Authentication{
-        //检查商品是否存在
-        require(itemExists[numb], "Item does not exist");
+    function closeAuction(uint256 numb) public Authentication itemMustExist(numb) {
 
         //使用require对当前时间跟拍卖发起时间进行比较，判断当前是否处于拍卖结束
         //特殊处理：如果AuctionTime为0，则允许立即关闭拍卖
@@ -375,15 +469,32 @@ contract auction{
             require(timeStamp > 0, "Auction not started");
         }
 
-        //通过if语句进行判断，当前商品的归属是否是拍卖发起人
-        if (belong[numb] == Auctioneer){
+        // 根据拍卖模式执行不同的结束逻辑
+        if (auctionMode[numb] == AuctionMode.SINGLE) {
+            // 单一所有权模式：保持原有逻辑
+            //通过if语句进行判断，当前商品的归属是否是拍卖发起人
+            if (belong[numb] == Auctioneer){
+                //修改状态为流拍
+                Astate[numb] = 3;
+            }else{
+                //将商品状态修改为成功拍卖
+                Astate[numb] = 2;
+            }
+        } else {
+            // 多人共同持有模式：检查是否有出价者
+            if (totalShares[numb] == 0) {
+                //没有出价者，流拍
+                Astate[numb] = 3;
+                belong[numb] = Auctioneer;
+            } else {
+                //有出价者，成功拍卖，份额已在MarkUp中计算
+                Astate[numb] = 2;
+                //商品归属保持为合约地址，表示多人共同持有
+                belong[numb] = address(this);
 
-            //修改状态为流拍
-            Astate[numb] = 3;
-        }else{
-
-            //将商品状态修改为成功拍卖
-            Astate[numb] = 2;
+                //发出份额计算完成事件
+                emit SharesCalculated(numb, totalShares[numb], shareholders[numb].length);
+            }
         }
 
         //重置商品起拍时间
@@ -398,9 +509,7 @@ contract auction{
     @dev 只有拍卖发起人可以调用，会退还最高出价给出价者
     @param numb 商品编号
     */
-    function stopAuction(uint8 numb) public Authentication {
-        //检查商品是否存在
-        require(itemExists[numb], "Item does not exist");
+    function stopAuction(uint256 numb) public Authentication itemMustExist(numb) {
 
         //检查商品是否正在拍卖中
         require(Astate[numb] == 1, "Item is not under auction");
@@ -452,8 +561,7 @@ contract auction{
     @param numb 商品编号
     @return address 商品拥有者的地址
     */
-    function getBelong(uint8 numb) public view Authentication returns(address){
-        require(itemExists[numb], "Item does not exist");
+    function getBelong(uint256 numb) public view Authentication itemMustExist(numb) returns(address){
         return belong[numb];
     }
 
@@ -469,10 +577,7 @@ contract auction{
     @param numb 商品编号
     @return uint256 商品最高叫价
     */
-    function getMaxMoney(uint8 numb)public view returns(uint256){
-        //检查商品是否存在
-        require(itemExists[numb], "Item does not exist");
-
+    function getMaxMoney(uint256 numb) public view itemMustExist(numb) returns(uint256){
         //使用require对商品的状态进行判断，需要对在拍卖的商品才能查询当前最高叫价
         require (Astate[numb] == 1 ,"The current product is not available");
 
@@ -482,15 +587,13 @@ contract auction{
         }else{
             return bond[numb];
         }
-
     }
     /*
     @notice 实现获取对应商品的状态（修改版本，支持动态商品）
     @param numb 商品编号
     @return string 商品状态
     */
-    function getStatus(uint8 numb)public view returns(string memory){
-        require(itemExists[numb], "Item does not exist");
+    function getStatus(uint256 numb) public view itemMustExist(numb) returns(string memory){
         return state[Astate[numb]];
     }
 
@@ -502,8 +605,7 @@ contract auction{
             uint256 起拍价格
             uint256 拍卖结束时间
     */
-    function getItemInformation(uint8 numb)public view returns(string memory,uint256,uint256,uint256){
-        require(itemExists[numb], "Item does not exist");
+    function getItemInformation(uint256 numb) public view itemMustExist(numb) returns(string memory,uint256,uint256,uint256){
         return (commodity[numb],AuctionTime,StartPrice,endtime);
     }
 
@@ -513,48 +615,171 @@ contract auction{
     @param numb 商品编号
     @return Bidder[] 交易记录的数组
     */
-    function getRecord(uint8 numb) public view Authentication returns (Bidder[] memory){
-        require(itemExists[numb], "Item does not exist");
+    function getRecord(uint256 numb) public view Authentication itemMustExist(numb) returns (Bidder[] memory){
         return record[numb];
     }
 
      /*
-    @notice 实现拍卖发起人提取保证金（修改版本，支持动态商品）
-    @dev 该方法只能有交易发起者调用
+    @notice 实现拍卖发起人提取保证金（修复版本）- 仅限单一拍卖模式
+    @dev 该方法只能有交易发起者调用，修复payable问题和多人拍卖逻辑错误
     @param numb 商品编号
     */
-    function getAuctionMoney(uint8 numb) public payable Authentication{
-        //检查商品是否存在
-        require(itemExists[numb], "Item does not exist");
+   function getAuctionMoney(uint256 numb) public Authentication itemMustExist(numb) {
+    require(block.timestamp > endtime, "The current auction is not over yet. You can't extract");
+    require(Astate[numb] == 2, "Your product was not successfully sold");
+    require(auctionMode[numb] == AuctionMode.SINGLE, "Cannot withdraw from multi-auction, use withdrawShareholderFunds instead");
 
-        //使用require判断商品拍卖是否结束
-        require(block.timestamp > endtime, "The current auction is not over yet. You can't extract");
+    require(bond[numb] != 0, "You have initiated transaction amount withdrawal");
+    uint256 amt = bond[numb];
+    bond[numb] = 0;
+    payable(msg.sender).transfer(amt);
+}
 
-        //使用require判断商品是否成功出售
-        require(Astate[numb] == 2 ,"Your product was not successfully sold");
+    /*
+    @notice 多人拍卖股东提取资金 - 修复多人拍卖资金分配问题
+    @dev 允许股东提取自己的份额
+    @param numb 商品编号
+    */
+    function withdrawShareholderFunds(uint256 numb) external itemMustExist(numb) {
+        require(Astate[numb] == 2, "Auction not completed successfully");
+        require(auctionMode[numb] == AuctionMode.MULTI, "Not a multi-auction");
+        require(userShares[numb][msg.sender] > 0, "No shares to withdraw");
 
-        //使用require判断保证金内是否还有余额
-        require(bond[numb] != 0, "You have initiated transaction amount withdrawal");
+        uint256 shareAmount = userShares[numb][msg.sender];
+        userShares[numb][msg.sender] = 0;
+        totalShares[numb] -= shareAmount;
 
-        //拍卖发起人提取保证金
-        payable(msg.sender).transfer(bond[numb]);
+        payable(msg.sender).transfer(shareAmount);
 
-        //重置保证金为0
-        bond[numb] = 0;
+        emit ShareholderWithdrawal(numb, msg.sender, shareAmount);
+    }
+
+    // ===== 新增：多人拍卖份额查询和管理函数 =====
+
+    /*
+    @notice 查询用户在某个商品中的份额金额
+    @param itemId 商品ID
+    @param user 用户地址
+    @return uint256 用户的份额金额
+    */
+    function getUserShare(uint256 itemId, address user) external view itemMustExist(itemId) returns (uint256) {
+        return userShares[itemId][user];
     }
 
     /*
-    @notice 销毁合约（修改版本，支持动态商品）
-    @dev 该方法只能由合约发起者调用，并且该方法只有在拍卖全部结束后才能调用，调用后合约将被销毁
+    @notice 查询某个商品的总份额金额
+    @param itemId 商品ID
+    @return uint256 总份额金额
     */
-    function destroy() public virtual Authentication{
+    function getTotalShares(uint256 itemId) external view itemMustExist(itemId) returns (uint256) {
+        return totalShares[itemId];
+    }
+
+    /*
+    @notice 查询用户在某个商品中的份额百分比
+    @param itemId 商品ID
+    @param user 用户地址
+    @return uint256 份额百分比（乘以10000，例如2500表示25%）
+    */
+    function getSharePercentage(uint256 itemId, address user) external view itemMustExist(itemId) returns (uint256) {
+        if (totalShares[itemId] == 0) {
+            return 0;
+        }
+        return (userShares[itemId][user] * 10000) / totalShares[itemId];
+    }
+
+    /*
+    @notice 查询用户份额并发出事件（非view版本）
+    @param itemId 商品ID
+    @param user 用户地址
+    @return uint256 份额百分比（乘以10000，例如2500表示25%）
+    */
+    function queryShareWithEvent(uint256 itemId, address user) external itemMustExist(itemId) returns (uint256) {
+        uint256 shares = userShares[itemId][user];
+        uint256 percentage = 0;
+        if (totalShares[itemId] > 0) {
+            percentage = (shares * 10000) / totalShares[itemId];
+        }
+
+        //发出查询事件
+        emit ShareQuery(itemId, user, shares, percentage);
+
+        return percentage;
+    }
+
+    /*
+    @notice 获取某个商品的所有股东地址列表
+    @param itemId 商品ID
+    @return address[] 股东地址数组
+    */
+    function getAllShareholders(uint256 itemId) external view itemMustExist(itemId) returns (address[] memory) {
+        return shareholders[itemId];
+    }
+
+    /*
+    @notice 获取某个商品的股东数量
+    @param itemId 商品ID
+    @return uint256 股东数量
+    */
+    function getShareholderCount(uint256 itemId) external view itemMustExist(itemId) returns (uint256) {
+        return shareholders[itemId].length;
+    }
+
+    /*
+    @notice 获取多人拍卖的所有出价记录
+    @param itemId 商品ID
+    @return MultiBidder[] 出价记录数组
+    */
+    function getMultiBidders(uint256 itemId) external view itemMustExist(itemId) returns (MultiBidder[] memory) {
+        return multiBidders[itemId];
+    }
+
+    /*
+    @notice 检查某个商品是否为多人拍卖模式
+    @param itemId 商品ID
+    @return bool 是否为多人拍卖模式
+    */
+    function isMultiAuction(uint256 itemId) external view itemMustExist(itemId) returns (bool) {
+        return auctionMode[itemId] == AuctionMode.MULTI;
+    }
+
+    /*
+    @notice 获取商品的拍卖模式
+    @param itemId 商品ID
+    @return AuctionMode 拍卖模式
+    */
+    function getAuctionMode(uint256 itemId) external view itemMustExist(itemId) returns (AuctionMode) {
+        return auctionMode[itemId];
+    }
+
+    /*
+    @notice 禁用合约（修复版本）- 替代过时的selfdestruct
+    @dev 该方法只能由合约发起者调用，并且该方法只有在拍卖全部结束后才能调用
+    */
+    function disableContract() public virtual Authentication{
         // 检查所有存在的商品
         for (uint256 i = 0; i < allItemIds.length; i++) {
             uint256 itemId = allItemIds[i];
             require(Astate[itemId] != 1 && bond[itemId] == 0, "Some goods are still in auction or funds not withdrawn");
+            require(totalShares[itemId] == 0, "Some multi-auction funds not withdrawn");
         }
 
-        // 销毁合约
-        selfdestruct(Auctioneer);
+        // 禁用合约
+        contractDisabled = true;
+
+        // 将剩余ETH转给Auctioneer（如果有的话）
+        if (address(this).balance > 0) {
+            Auctioneer.transfer(address(this).balance);
+        }
+
+        emit ContractDisabled(block.timestamp);
+    }
+
+    /*
+    @notice 检查合约是否被禁用
+    @return bool 合约是否被禁用
+    */
+    function isContractDisabled() external view returns (bool) {
+        return contractDisabled;
     }
 }

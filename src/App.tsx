@@ -4,6 +4,8 @@ import { AuctionItem } from '@/components/AuctionItem'
 import { QueryPanel } from '@/components/QueryPanel'
 import { ContractDebugger } from '@/components/ContractDebugger'
 import { ItemManager } from '@/components/ItemManager'
+import { AuctionTimeManager } from '@/components/AuctionTimeManager'
+import { MultiAuctionManager } from '@/components/MultiAuctionManager'
 import { useAllItemIds } from '@/hooks/useAuctionContract'
 import { ITEMS, CONTRACT_ADDRESS } from '@/config/contract'
 
@@ -17,8 +19,8 @@ function App() {
     : ITEMS
 
   return (
-    <div className="min-h-screen bg-gray-900 py-8">
-      <div className="max-w-6xl mx-auto px-4">
+    <div className="min-h-screen w-full bg-gray-900 py-4 sm:py-8">
+      <div className="w-full max-w-6xl mx-auto px-2 sm:px-4">
         {/* 头部 */}
         <div className="text-center mb-8">
           <h1 className="text-4xl font-bold text-white mb-2">
@@ -41,16 +43,22 @@ function App() {
         {/* 拍卖商品列表 */}
         {isConnected ? (
           <div className="space-y-8">
+            {/* 管理面板 */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
+              <ItemManager />
+              <AuctionTimeManager />
+            </div>
+
             {/* 信息查询面板 */}
             <QueryPanel />
 
-            {/* 商品管理面板 */}
-            <ItemManager />
+            {/* 多人拍卖管理面板 */}
+            <MultiAuctionManager />
 
             <h2 className="text-2xl font-bold text-white text-center mb-6">
               拍卖商品
             </h2>
-            <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
+            <div className="grid gap-4 sm:gap-6 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
               {displayItems.map((item) => (
                 <AuctionItem key={item.id} itemId={item.id} />
               ))}
@@ -71,6 +79,7 @@ function App() {
             <div>
               <h4 className="font-semibold text-white mb-2">拍卖发起人操作：</h4>
               <ul className="space-y-1 list-disc list-inside">
+                <li>设置拍卖时间：配置拍卖持续时长</li>
                 <li>上架商品：将商品设置为拍卖状态</li>
                 <li>结束拍卖：拍卖时间结束后确认结果</li>
                 <li>提取保证金：成功出售后提取最高出价</li>
@@ -87,7 +96,7 @@ function App() {
           </div>
           <div className="mt-4 p-3 bg-yellow-500/10 border border-yellow-500/30 rounded-lg">
             <p className="text-yellow-400 text-sm">
-              ⚠️ 注意：这是测试网环境，请使用测试 ETH 进行交易。每次拍卖时长为 10 分钟。
+              ⚠️ 注意：这是测试网环境，请使用测试 ETH 进行交易。拍卖发起人需要先设置拍卖时长，然后才能上架商品。
             </p>
           </div>
         </div>

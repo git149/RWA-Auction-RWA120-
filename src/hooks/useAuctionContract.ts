@@ -99,6 +99,69 @@ export function useItemDetails(itemId: number) {
   })
 }
 
+export function useAuctionTime() {
+  return useReadContract({
+    address: CONTRACT_ADDRESS,
+    abi: RWA120_ABI,
+    functionName: 'getAuctionTime',
+  })
+}
+
+// 多人拍卖相关的 hooks
+export function useIsMultiAuction(itemId: number) {
+  return useReadContract({
+    address: CONTRACT_ADDRESS,
+    abi: RWA120_ABI,
+    functionName: 'isMultiAuction',
+    args: [itemId],
+  })
+}
+
+export function useUserShare(itemId: number, userAddress: string) {
+  return useReadContract({
+    address: CONTRACT_ADDRESS,
+    abi: RWA120_ABI,
+    functionName: 'getUserShare',
+    args: [itemId, userAddress],
+  })
+}
+
+export function useTotalShares(itemId: number) {
+  return useReadContract({
+    address: CONTRACT_ADDRESS,
+    abi: RWA120_ABI,
+    functionName: 'getTotalShares',
+    args: [itemId],
+  })
+}
+
+export function useSharePercentage(itemId: number, userAddress: string) {
+  return useReadContract({
+    address: CONTRACT_ADDRESS,
+    abi: RWA120_ABI,
+    functionName: 'getSharePercentage',
+    args: [itemId, userAddress],
+  })
+}
+
+export function useAllShareholders(itemId: number) {
+  return useReadContract({
+    address: CONTRACT_ADDRESS,
+    abi: RWA120_ABI,
+    functionName: 'getAllShareholders',
+    args: [itemId],
+  })
+}
+
+export function useShareholderCount(itemId: number) {
+  return useReadContract({
+    address: CONTRACT_ADDRESS,
+    abi: RWA120_ABI,
+    functionName: 'getShareholderCount',
+    args: [itemId],
+  })
+}
+
 export function useNextItemId() {
   return useReadContract({
     address: CONTRACT_ADDRESS,
@@ -114,12 +177,12 @@ export function useAuctionActions() {
   const { isLoading: isConfirming, isSuccess: isConfirmed } = 
     useWaitForTransactionReceipt({ hash })
 
-  const putOnShelves = (itemId: number) => {
+  const putOnShelves = (itemId: number, mode: number = 0) => {
     writeContract({
       address: CONTRACT_ADDRESS,
       abi: RWA120_ABI,
       functionName: 'PutOnShelves',
-      args: [itemId],
+      args: [itemId, mode],
     })
   }
 
@@ -186,6 +249,15 @@ export function useAuctionActions() {
     })
   }
 
+  const setAuctionTime = (auctionTime: number) => {
+    writeContract({
+      address: CONTRACT_ADDRESS,
+      abi: RWA120_ABI,
+      functionName: 'setAuctionTime',
+      args: [auctionTime],
+    })
+  }
+
   return {
     putOnShelves,
     markUp,
@@ -195,6 +267,7 @@ export function useAuctionActions() {
     destroy,
     addNewItem,
     removeItem,
+    setAuctionTime,
     isPending,
     isConfirming,
     isConfirmed,
